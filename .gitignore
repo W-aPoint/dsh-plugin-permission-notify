@@ -1,0 +1,13 @@
+# dependencies / build output
+node_modules/
+.scratch/
+*.log
+
+# local tool state
+package/.dsh-project-memory/
+.vscode/
+.idea/
+
+# Windows
+Thumbs.db
+desktop.ini
