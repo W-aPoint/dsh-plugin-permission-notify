@@ -52,7 +52,12 @@ const ctx = {
   },
   inject(_deps, callback) {
     injected += 1
-    callback({ ...ctx, permissionPresets: fakePermissions, sessions: { list: () => sessions } })
+    callback({
+      ...ctx,
+      permissionPresets: fakePermissions,
+      sessions: { list: () => sessions },
+      agents: { list: () => sessions.map((session) => ({ session })) },
+    })
     return () => {}
   },
   get: () => undefined,
@@ -85,7 +90,7 @@ const check = (label, condition, extra = '') => {
   }
 }
 
-check('injected permissionPresets + sessions', injected === 1, `(${injected})`)
+check('injected permissionPresets + agents', injected === 1, `(${injected})`)
 
 // existing root session must be switched on mount; child sessions must not
 check(
@@ -94,19 +99,48 @@ check(
   JSON.stringify(presetCalls),
 )
 
-emit('session/created', root)
+// current dsh announces agents; this path is append-legal and synchronous.
+emit('agent/created', { agent: { session: root } })
 check(
-  'session/created applies auto to a new root session',
+  'agent/created applies auto to a new root session',
   presetCalls.some((call) => call.id === 'sess-root' && call.name === 'auto'),
   JSON.stringify(presetCalls),
 )
 
-emit('session/created', child)
+emit('agent/created', { agent: { session: child } })
 check(
-  'session/created skips a subagent session',
+  'agent/created skips a subagent session',
   !presetCalls.some((call) => call.id === 'sess-child'),
   JSON.stringify(presetCalls),
 )
+
+// older dsh only emits session/created, where appends are still blocked:
+// the plugin must defer one macrotask and then succeed.
+const deferred = { id: 'sess-deferred', header: { cwd: 'D:\\work\\deferred', origin: 'main' } }
+emit('session/created', deferred)
+const appliedImmediately = presetCalls.some((call) => call.id === 'sess-deferred')
+await new Promise((resolve) => setTimeout(resolve, 30))
+check('session/created defers the append instead of failing', !appliedImmediately)
+check(
+  'deferred session/created applies auto afterwards',
+  presetCalls.some((call) => call.id === 'sess-deferred' && call.name === 'auto'),
+  JSON.stringify(presetCalls),
+)
+
+// a host that rejects the append with the announcement guard must be retried.
+const guardedSession = { id: 'sess-guard', header: { cwd: 'D:\\work\\guard', origin: 'main' } }
+let guardThrown = 0
+const originalSet = fakePermissions.set
+fakePermissions.set = (session, name) => {
+  if (session.id === 'sess-guard' && guardThrown === 0) {
+    guardThrown += 1
+    throw new Error(`session "${session.id}" cannot append before session/created completes`)
+  }
+  originalSet(session, name)
+}
+emit('agent/created', { agent: { session: guardedSession } })
+await new Promise((resolve) => setTimeout(resolve, 120))
+check('announcement-guard rejection is retried', guardThrown === 1 && presetCalls.some((call) => call.id === 'sess-guard'))
 
 const readLog = () => {
   try {

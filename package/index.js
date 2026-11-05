@@ -255,11 +255,14 @@ export function apply(ctx, config) {
     return
   }
 
-  ctx.inject(['permissionPresets', 'sessions'], (child) => {
+  ctx.inject(['permissionPresets', 'agents'], (child) => {
     const permissions = child.permissionPresets
+    /** Sessions whose deferred retry is already scheduled. */
+    const pending = new Set()
+
     const applyDefault = (session, reason) => {
       try {
-        if (!isRootSession(session)) return
+        if (!session || !isRootSession(session)) return
         const available = permissions.names ?? []
         if (!available.includes(targetPreset)) {
           if (!state.warnedMissingPresets) {
@@ -277,19 +280,54 @@ export function apply(ctx, config) {
         permissions.set(session, targetPreset)
         logLine(ctx, logFile, `permission preset -> ${targetPreset} (${reason}) session=${session?.id ?? '-'}`)
       } catch (error) {
-        logLine(
-          ctx,
-          logFile,
-          `failed to apply preset ${targetPreset} (${reason}): ${error instanceof Error ? error.message : String(error)}`,
-        )
+        const message = error instanceof Error ? error.message : String(error)
+        // dsh refuses appends while `session/created` is still dispatching; retry
+        // once on the next macrotask, when the announcement is complete.
+        if (message.includes('cannot append before session/created completes')) {
+          scheduleRetry(session, reason)
+          return
+        }
+        logLine(ctx, logFile, `failed to apply preset ${targetPreset} (${reason}): ${message}`)
+      }
+    }
+
+    const scheduleRetry = (session, reason) => {
+      if (!session || pending.has(session.id)) return
+      pending.add(session.id)
+      const timer = setTimeout(() => {
+        pending.delete(session.id)
+        applyDefault(session, `${reason}:retry`)
+      }, 50)
+      timer.unref?.()
+    }
+
+    const listSessions = () => {
+      try {
+        if (Array.isArray(child.agents?.list?.())) return child.agents.list().map((agent) => agent?.session)
+      } catch {
+        /* fall through */
+      }
+      try {
+        return child.sessions?.list?.() ?? []
+      } catch {
+        return []
       }
     }
 
     child.effect(() => {
-      const disposers = [child.on('session/created', (session) => applyDefault(session, 'created'))]
+      const disposers = [
+        // Current dsh announces agent ownership; appends are legal here.
+        child.on('agent/created', ({ agent } = {}) => applyDefault(agent?.session, 'created')),
+        // Older dsh only exposed session/created, where appends are still blocked;
+        // defer by one macrotask so the announcement can finish first.
+        child.on('session/created', (session) => {
+          const timer = setTimeout(() => applyDefault(session, 'created:deferred'), 0)
+          timer.unref?.()
+        }),
+      ]
       if (config.applyToExistingSessions) {
         try {
-          for (const session of child.sessions.list()) applyDefault(session, 'mounted')
+          for (const session of listSessions()) applyDefault(session, 'mounted')
         } catch (error) {
           logLine(ctx, logFile, `existing-session sweep failed: ${error instanceof Error ? error.message : String(error)}`)
         }

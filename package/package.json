@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-permission-notify",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "DSH plugin: make Auto review the default permission preset and raise native Windows notifications (toast + system sound) when a turn finishes or the agent needs a user decision.",
   "private": true,
   "type": "module",

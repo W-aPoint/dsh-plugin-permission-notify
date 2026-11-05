@@ -58,10 +58,13 @@ with flags (`-DefaultPreset off`, `-SkipExistingSessions`, `-NoSound`, `-Uninsta
 
 ## How it works (short version)
 
-* **Permission half** — on `session/created` (and on mount) the plugin calls
+* **Permission half** — on `agent/created` (and on mount) the plugin calls
   `ctx.permissionPresets.set(session, 'auto')` for root sessions only. Sub-agent sessions are left
   alone. If the `@deepseek-ai/dsh-experimental-auto-review` bundle is not installed, `auto` is not an
-  available preset and the plugin logs a warning instead of failing.
+  available preset and the plugin logs a warning instead of failing. dsh **0.2.2** rejects session
+  appends while `session/created` is still dispatching, so the plugin listens on `agent/created`
+  (which the built-in preset service itself pins on) and keeps a deferred/retried `session/created`
+  fallback for other runtimes.
 * **Notification half** — listens to `session/event` for `turn/end`, `approval/asked` and
   `tool/call(ask_user_question)`, keeps the newest `assistant/message` text per session as the
   snippet, then spawns `assets/notify.ps1` which raises a Windows toast.
@@ -80,6 +83,9 @@ nothing, and how the foreground lock was solved: see **[docs/how-it-works.md](do
 * The `@deepseek-ai/dsh-experimental-auto-review` bundle enabled in the profile, if you want the
   `auto` preset (`install.ps1` warns when it is missing).
 * PowerShell 5.1 (shipped with Windows). No admin rights: everything lives in `HKCU` and `~/.dsh`.
+
+Tested against dsh `0.2.1-rc.3` and `0.2.2-rc.1`. See [CHANGELOG.md](CHANGELOG.md) for the
+`session/created` append-guard fix shipped in v0.2.1.
 
 ## Verifying
 

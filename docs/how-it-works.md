@@ -47,11 +47,38 @@ The service exposes enough to work around it:
 | `permissionPresets.current(session)` | effective preset of a session |
 | `permissionPresets.set(session, name)` | append `permission/preset` and write the two knobs |
 
-So the plugin listens on `session/created`, filters to root sessions
+So the plugin listens on **`agent/created`**, filters to root sessions
 (`session.header.origin !== 'subagent'`, no `parentSession`), and calls `set(session, 'auto')`.
 On mount it does the same for existing sessions when `applyToExistingSessions` is on.
 Because the presets service pins the initial permission in its own `session/created` listener and
 this plugin is appended after the built-in layers, the switch lands *after* pinning.
+
+### dsh 0.2.2: appends are blocked during `session/created`
+
+dsh 0.2.2 announced store-owned sessions with a new guard:
+
+```
+session "…" cannot append before session/created completes
+```
+
+The `SessionStore.announce()` method dispatches `session/created` synchronously and only flips
+`entry.announcement = "complete"` afterwards, so **any** `session.append` from a creation listener
+throws — including `permissionPresets.set()`. That is why the built-in preset service migrated its
+pinning from `session/created` to `agent/created` (emitted through `ctx.serial` after the session is
+live). This plugin follows the same event:
+
+```js
+child.on('agent/created', ({ agent }) => applyDefault(agent?.session, 'created'))
+```
+
+and keeps belt-and-braces handling for older/newer shapes:
+
+* a `session/created` listener that defers one macrotask before touching the session;
+* a retry (50 ms) whenever a `set()` rejects with the announcement guard, so a future runtime that
+  re-introduces the ordering cannot silently drop the preset.
+
+Both paths are covered by `tools/verify.ps1` (fake agent-created path, deferred path, guard-retry path).
+
 
 ## 3. Why the Windows toast did not show at first
 

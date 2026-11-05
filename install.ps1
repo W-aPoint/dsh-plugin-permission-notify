@@ -57,9 +57,43 @@ function Remove-LinkOrDir {
 }
 
 function Remove-ManagedBlock {
+    <#
+      只删除「包含 id: permission-notify 的那个 - insert: 条目」以及我们自己的标记注释。
+      不能按 `# >>> ... # <<<` 区间整段删除：dsh 的插件管理器之后可能把别的条目写进
+      这两行标记之间，整段删会把用户的插件配置一起删掉。
+    #>
     param([string] $Text)
-    $pattern = "(?s)\r?\n?" + [regex]::Escape($BeginMarker) + ".*?" + [regex]::Escape($EndMarker) + ".*?(?:\r?\n)?"
-    return [regex]::Replace($Text, $pattern, "`n")
+
+    $lines = $Text -split "`r?`n"
+    $out = New-Object System.Collections.Generic.List[string]
+    $i = 0
+    while ($i -lt $lines.Count) {
+        $line = $lines[$i]
+
+        if ($line -match '^\s*#\s*(>>>|<{3})\s*dsh-plugin-permission-notify') { $i++; continue }
+
+        if ($line -match '^-\s+insert:\s*$') {
+            $block = New-Object System.Collections.Generic.List[string]
+            $block.Add($line)
+            $j = $i + 1
+            while ($j -lt $lines.Count) {
+                $next = $lines[$j]
+                if ($next -match '^\S') { break }          # 下一个顶层条目 / 标记
+                $block.Add($next)
+                $j++
+            }
+            $blockText = ($block -join "`n")
+            if ($blockText -match 'id:\s*permission-notify') { $i = $j; continue }   # 丢掉我们自己的条目
+            foreach ($kept in $block) { $out.Add($kept) }
+            $i = $j
+            continue
+        }
+
+        $out.Add($line)
+        $i++
+    }
+
+    return (($out -join "`n").TrimEnd() + "`n")
 }
 
 if (-not (Test-Path -LiteralPath $ProfileDir)) {
